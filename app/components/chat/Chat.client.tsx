@@ -137,7 +137,20 @@ export const ChatImpl = memo(
 
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
 
-    const { messages, isLoading, input, handleInputChange, setInput, stop, append, setMessages, reload } = useChat({
+    const {
+      messages,
+      isLoading,
+      input,
+      handleInputChange,
+      setInput,
+      stop,
+      append,
+      setMessages,
+      reload,
+      error,
+      data: chatData,
+      setData,
+    } = useChat({
       api: '/api/chat',
       body: {
         apiKeys,
@@ -146,14 +159,15 @@ export const ChatImpl = memo(
         contextOptimization: contextOptimizationEnabled,
       },
       sendExtraMessageFields: true,
-      onError: (error) => {
-        logger.error('Request failed\n\n', error);
+      onError: (e) => {
+        logger.error('Request failed\n\n', e, error);
         toast.error(
-          'There was an error processing your request: ' + (error.message ? error.message : 'No details were returned'),
+          'There was an error processing your request: ' + (e.message ? e.message : 'No details were returned'),
         );
       },
       onFinish: (message, response) => {
         const usage = response.usage;
+        setData(undefined);
 
         if (usage) {
           console.log('Token usage:', usage);
@@ -168,7 +182,8 @@ export const ChatImpl = memo(
     });
     useEffect(() => {
       const prompt = searchParams.get('prompt');
-      console.log(prompt, searchParams, model, provider);
+
+      // console.log(prompt, searchParams, model, provider);
 
       if (prompt) {
         setSearchParams({});
@@ -262,13 +277,17 @@ export const ChatImpl = memo(
        */
       await workbenchStore.saveAllFiles();
 
+      if (error != null) {
+        setMessages(messages.slice(0, -1));
+      }
+
       const fileModifications = workbenchStore.getFileModifcations();
 
       chatStore.setKey('aborted', false);
 
       runAnimation();
 
-      if (!chatStarted && messageInput && autoSelectTemplate) {
+      if (!chatStarted && _input && autoSelectTemplate) {
         setFakeLoading(true);
         setMessages([
           {
@@ -289,14 +308,22 @@ export const ChatImpl = memo(
 
         // reload();
 
-        const template = await selectStarterTemplate({
-          message: messageInput,
+        const { template, title } = await selectStarterTemplate({
+          message: _input,
           model,
           provider,
         });
 
         if (template !== 'blank') {
-          const temResp = await getTemplates(template);
+          const temResp = await getTemplates(template, title).catch((e) => {
+            if (e.message.includes('rate limit')) {
+              toast.warning('Rate limit exceeded. Skipping starter template\n Continuing with blank template');
+            } else {
+              toast.warning('Failed to import starter template\n Continuing with blank template');
+            }
+
+            return null;
+          });
 
           if (temResp) {
             const { assistantMessage, userMessage } = temResp;
@@ -305,7 +332,7 @@ export const ChatImpl = memo(
               {
                 id: `${new Date().getTime()}`,
                 role: 'user',
-                content: messageInput,
+                content: _input,
 
                 // annotations: ['hidden'],
               },
@@ -521,6 +548,7 @@ export const ChatImpl = memo(
         setImageDataList={setImageDataList}
         actionAlert={actionAlert}
         clearAlert={() => workbenchStore.clearAlert()}
+        data={chatData}
       />
     );
   },
